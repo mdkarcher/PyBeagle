@@ -1,7 +1,7 @@
 import phyloinfer as pinf
 # import numpy as np
 # import random as rnd
-import timeit
+# import timeit
 
 from loglikelihood import *
 from reroot import *
@@ -36,9 +36,16 @@ def bg_lik_list(tree_list, seqs_list, model=JC):
     return result
 
 
+def bg_lik_list2(tree_list, seqs_list, model=JC):
+    result = []
+    for tree, seqs in zip(tree_list, seqs_list):
+        llik = loglikelihood_beagle_rooting_test(tree, seqs, model, scaling=True)
+        result.append(llik)
+    return result
+
 n_sims = 10
-n_tips = 100
-n_sites = 500
+n_tips = 300
+n_sites = 1500
 model = JC
 
 tree_list = []
@@ -59,5 +66,6 @@ bg_lliks = bg_lik_list(tree_list, seqs_list)
 # %timeit cheng_lliks = cheng_lik_list(tree_list, seqs_list)
 # %timeit mk_lliks = mk_lik_list(tree_list, seqs_list)
 # %timeit bg_lliks = bg_lik_list(tree_list, seqs_list)
+# %timeit bg_lliks2 = bg_lik_list2(tree_list, seqs_list)
 
 

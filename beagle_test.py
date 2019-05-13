@@ -17,8 +17,8 @@ from models import *
 # D, U, U_inv, rate_matrix = pinf.rateM.decompJC()
 
 # sample a random tree from the prior
-ntips = 25
-nsites = 150
+ntips = 100
+nsites = 1000
 # rnd.seed(473291)
 true_tree = pinf.tree.create(ntips, branch='random')
 true_tree.show()
