@@ -18,7 +18,8 @@ def gradient_loglikelihood(tree, seqs, model=JC, id_attr="id", leaf_attr="name")
     :param id_attr: Attribute/feature of each node that uniquely identifies it.
     :param leaf_attr: Attribute/feature of each leaf that uniquely identifies it,
     and uniquely identifies the sequence data row/entry in seqs.
-    :return: float representing the log-likelihood of the tree, given the sequence data and model.
+    :return: float representing the derivative of the log-likelihood of the tree,
+    given the sequence data and model.
     """
 
     tree = tree.copy()
@@ -30,7 +31,7 @@ def gradient_loglikelihood(tree, seqs, model=JC, id_attr="id", leaf_attr="name")
             needs_refresh = True
             break
         id_set.add(getattr(node, id_attr))
-    if needs_refresh or len(id_set) < 2*len(tree)-2:
+    if needs_refresh or len(id_set) < 2 * len(tree) - 2:
         refresh_ids(tree, id_attr)
 
     leaves = tree.get_leaves()
@@ -88,6 +89,18 @@ def gradient_loglikelihood(tree, seqs, model=JC, id_attr="id", leaf_attr="name")
 
 
 def gradient_loglikelihood_beagle(tree, seqs, model=JC, id_attr=None, leaf_attr=None, scaling=False):
+    """Calculate branch length gradient of a tree and sequences.
+
+    :param tree: Ete3 Tree object representing the tree topology and branch lengths.
+    :param seqs: Array-like or dictionary of lists of sequence characters or integers.
+    :param model: Substitution model in namedtuple "Model". Default: Jukes-Cantor.
+    :param id_attr: Attribute/feature of each node that uniquely identifies it.
+    :param leaf_attr: Attribute/feature of each leaf that uniquely identifies it,
+    and uniquely identifies the sequence data row/entry in seqs.
+    :return: float representing the derivative of the log-likelihood of the tree,
+    given the sequence data and model.
+    """
+
     if id_attr is None:
         id_attr = "id"
     if leaf_attr is None:
@@ -96,18 +109,27 @@ def gradient_loglikelihood_beagle(tree, seqs, model=JC, id_attr=None, leaf_attr=
     tree = tree.copy()
     seq_dict = convert_to_dict_lists(seqs)
     val = next(iter(seq_dict.values()))
+
     n_taxa = len(seq_dict)
     n_patterns = len(val)
     n_states = len(model.pi)
-    n_internals = n_taxa - 2
-    n_transition_probs = 2 * n_taxa - 3
 
+    n_internals = n_taxa - 2
+    n_edges = 2 * n_taxa - 3
+
+    n_partials = n_internals + n_edges
+    n_transition_probs = n_edges
+    n_derivatives = n_edges
+    n_matrices = n_transition_probs + n_derivatives
+
+    if scaling:
+        print("Scaling not currently supported.")
+        scaling = False
     n_scale_buffers = 0
     if scaling:
         n_scale_buffers = n_internals + 1
 
-    outgroup = next(iter(tree.get_leaves()))
-    reroot(tree, outgroup)
+    outgroup = tree.children[0]
     refresh_ids(tree, attr=id_attr)
 
     # Sanity check(s)
@@ -125,12 +147,12 @@ def gradient_loglikelihood_beagle(tree, seqs, model=JC, id_attr=None, leaf_attr=
     returnInfo = bg.BeagleInstanceDetails()
     instance = bg.beagleCreateInstance(
         n_taxa,  # tips
-        n_internals,  # partials
+        n_partials,  # partials
         n_taxa,  # sequences
         n_states,  # states
         n_patterns,  # patterns
         1,  # models
-        n_transition_probs,  # transition matrices
+        n_matrices,  # transition matrices
         1,  # rate categories
         n_scale_buffers,  # scale buffers
         None,  # resource restrictions
@@ -145,7 +167,6 @@ def gradient_loglikelihood_beagle(tree, seqs, model=JC, id_attr=None, leaf_attr=
     # Set tip states block
     for node in tree.get_leaves():
         states = bg.make_intarray(seq_dict[getattr(node, leaf_attr)])
-        # states = bg.createStates(seqs[getattr(node, leaf_attr)], dna_ids)
         bg.beagleSetTipStates(instance, getattr(node, id_attr), states)
 
     patternWeights = bg.createPatternWeights([1] * n_patterns)
@@ -181,46 +202,66 @@ def gradient_loglikelihood_beagle(tree, seqs, model=JC, id_attr=None, leaf_attr=
     # a list of indices and edge lengths
     # create a list of partial likelihood update operations
     node_list = []
+    derv_list = []
     edge_list = []
-    operations = bg.new_BeagleOperationArray(n_internals)
+    operations = bg.new_BeagleOperationArray(n_internals + n_edges)
+
     op_index = 0
-    for node in reversed(list(tree.traverse("levelorder"))):
-        if node is not outgroup:
-            # print(f"Node is {getattr(node, id_attr)}")
-            if node.is_root():
-                # print(f"Adding outgroup {getattr(outgroup, id_attr)}")
-                node_list.append(getattr(outgroup, id_attr))
-                edge_list.append(outgroup.dist)
-            else:
-                # print(f"Adding node {getattr(node, id_attr)}")
-                node_list.append(getattr(node, id_attr))
-                edge_list.append(node.dist)
+    for node in tree.traverse("postorder"):
+        if not node.is_root():
+            node_list.append(getattr(node, id_attr))
+            derv_list.append(getattr(node, id_attr) + n_edges)  # derivative indices
+            edge_list.append(node.dist)
 
-            if not node.is_leaf():
-                children = node.get_children()
-                if outgroup in children:
-                    children.remove(outgroup)
-                left_child, right_child = children
+        if not node.is_leaf():
+            children = node.get_children()
+            if outgroup in children:
+                children.remove(outgroup)
+            left_child, right_child = children
 
-                scaling_index = bg.BEAGLE_OP_NONE
-                if scaling:
-                    scaling_index = op_index + 1
+            scaling_index = bg.BEAGLE_OP_NONE
+            if scaling:
+                scaling_index = op_index + 1
 
-                op_list = [getattr(node, id_attr), scaling_index, bg.BEAGLE_OP_NONE,
-                           getattr(left_child, id_attr), getattr(left_child, id_attr),
-                           getattr(right_child, id_attr), getattr(right_child, id_attr)]
-                # print(f"Adding operation {op_list}")
+            op_list = [getattr(node, id_attr), scaling_index, bg.BEAGLE_OP_NONE,
+                       getattr(left_child, id_attr), getattr(left_child, id_attr),
+                       getattr(right_child, id_attr), getattr(right_child, id_attr)]
+            op = bg.make_operation(op_list)
+            bg.BeagleOperationArray_setitem(operations, op_index, op)
+            op_index += 1
+
+    nodeIndices = bg.make_intarray(node_list)
+    dervIndices = bg.make_intarray(derv_list)
+    edgeLengths = bg.make_doublearray(edge_list)
+
+    for node in tree.traverse("preorder"):
+        if not node.is_root():
+            parent = node.up
+            if not parent.is_root():
+                sibling = node.get_sisters()[0]
+                op_list = [getattr(node, id_attr) + n_edges, bg.BEAGLE_OP_NONE, bg.BEAGLE_OP_NONE,
+                           getattr(parent, id_attr) + n_edges, getattr(parent, id_attr),
+                           getattr(sibling, id_attr), getattr(sibling, id_attr)]
                 op = bg.make_operation(op_list)
                 bg.BeagleOperationArray_setitem(operations, op_index, op)
                 op_index += 1
-    nodeIndices = bg.make_intarray(node_list)
-    edgeLengths = bg.make_doublearray(edge_list)
+            else:
+                children = parent.get_children()
+                children.remove(node)
+
+                # TODO: Do I add scaling factors here?
+                op_list = [getattr(node, id_attr) + n_edges, bg.BEAGLE_OP_NONE, bg.BEAGLE_OP_NONE,
+                           getattr(children[0], id_attr), getattr(children[0], id_attr),
+                           getattr(children[1], id_attr), getattr(children[1], id_attr)]
+                op = bg.make_operation(op_list)
+                bg.BeagleOperationArray_setitem(operations, op_index, op)
+                op_index += 1
 
     # tell BEAGLE to populate the transition matrices for the above edge lengths
     bg.beagleUpdateTransitionMatrices(instance,  # instance
                                       0,  # eigenIndex
                                       nodeIndices,  # probabilityIndices
-                                      None,  # firstDerivativeIndices
+                                      dervIndices,  # firstDerivativeIndices
                                       None,  # secondDerivativeIndices
                                       edgeLengths,  # edgeLengths
                                       len(node_list))  # count
@@ -232,33 +273,40 @@ def gradient_loglikelihood_beagle(tree, seqs, model=JC, id_attr=None, leaf_attr=
         bg.beagleResetScaleFactors(instance, cumulative_scale_index)
     bg.beagleUpdatePartials(instance,  # instance
                             operations,  # eigenIndex
-                            n_internals,  # operationCount
+                            n_internals + n_edges,  # operationCount
                             cumulative_scale_index)  # cumulative scale index
 
-    logLp = bg.new_doublep()
     categoryWeightIndex = bg.make_intarray([0])
     stateFrequencyIndex = bg.make_intarray([0])
     cumulativeScaleIndex = bg.make_intarray([cumulative_scale_index])
 
-    indexFocalParent = bg.make_intarray([getattr(tree, id_attr)])
-    indexFocalChild = bg.make_intarray([getattr(outgroup, id_attr)])
+    logLp = bg.new_doublep()
+    dlogLp = bg.new_doublep()
+    result = dict()
 
-    bg.beagleCalculateEdgeLogLikelihoods(
-        instance,  # instance number
-        indexFocalParent,  # indices of parent partialsBuffers
-        indexFocalChild,  # indices of child partialsBuffers
-        indexFocalChild,  # transition probability matrices for this edge
-        None,  # first derivative matrices
-        None,  # second derivative matrices
-        categoryWeightIndex,  # weights to apply to each partialsBuffer
-        stateFrequencyIndex,  # state frequencies for each partialsBuffer
-        cumulativeScaleIndex,  # scaleBuffers containing accumulated factors
-        1,  # Number of partialsBuffer
-        logLp,  # destination for log likelihood
-        None,  # destination for first derivative
-        None  # destination for second derivative
-    )
+    for node in tree.traverse('preorder'):
+        if not node.is_root():
+            upper_partials_index = bg.make_intarray([getattr(node, id_attr) + n_edges])
+            node_index = bg.make_intarray([getattr(node, id_attr)])
+            node_deriv_index = bg.make_intarray([getattr(node, id_attr) + n_edges])
+            bg.beagleCalculateEdgeLogLikelihoods(
+                instance,  # instance number
+                upper_partials_index,  # indices of parent partialsBuffers
+                node_index,  # indices of child partialsBuffers
+                node_index,  # transition probability matrices for this edge
+                node_deriv_index,  # first derivative matrices
+                None,  # second derivative matrices
+                categoryWeightIndex,  # weights to apply to each partialsBuffer
+                stateFrequencyIndex,  # state frequencies for each partialsBuffer
+                cumulativeScaleIndex,  # scaleBuffers containing accumulated factors
+                1,  # Number of partialsBuffer
+                logLp,  # destination for log likelihood
+                dlogLp,  # destination for first derivative  # derivative code
+                None  # destination for second derivative
+            )
 
-    logL = bg.doublep_value(logLp)
-    return logL
+            # logL = bg.doublep_value(logLp)
+            dlogL = bg.doublep_value(dlogLp)
+            result[getattr(node, id_attr)] = dlogL
 
+    return result

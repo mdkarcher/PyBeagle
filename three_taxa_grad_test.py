@@ -5,6 +5,7 @@ import random as rnd
 
 from models import *
 from loglikelihood import *
+from gradient import *
 
 ntips = 10
 nsites = 40
@@ -31,6 +32,9 @@ true_my_grad = gradient_loglikelihood(true_tree, data)
 for i in range(len(true_my_grad)):
     print(f"Node {i}: ch={round(true_grad[i], 6)}, mk={round(true_my_grad[i], 6)}, diff={round(true_grad[i]-true_my_grad[i], 6)}")
 
+beag_grad = gradient_loglikelihood_beagle(true_tree, data)
+for i in range(len(true_my_grad)):
+    print(f"Node {i}: ch={round(true_grad[i], 6)}, mk={round(beag_grad[i], 6)}, diff={round(true_grad[i]-beag_grad[i], 6)}")
 
 # Beagle section
 
