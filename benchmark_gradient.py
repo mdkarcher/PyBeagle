@@ -38,8 +38,8 @@ def bg_grad_list(tree_list, seqs_list, model=JC):
 
 
 n_sims = 10
-n_tips = 200
-n_sites = 2000
+n_tips = 100
+n_sites = 500
 model = JC
 
 tree_list = []

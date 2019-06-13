@@ -44,8 +44,8 @@ def bg_lik_list2(tree_list, seqs_list, model=JC):
     return result
 
 n_sims = 10
-n_tips = 300
-n_sites = 1500
+n_tips = 100
+n_sites = 500
 model = JC
 
 tree_list = []
@@ -63,9 +63,9 @@ bg_lliks = bg_lik_list(tree_list, seqs_list)
 
 # timeit.timeit('cheng_lik_list(tree_list, seqs_list)', number=10)
 
-# %timeit cheng_lliks = cheng_lik_list(tree_list, seqs_list)
-# %timeit mk_lliks = mk_lik_list(tree_list, seqs_list)
-# %timeit bg_lliks = bg_lik_list(tree_list, seqs_list)
-# %timeit bg_lliks2 = bg_lik_list2(tree_list, seqs_list)
+# %timeit cheng_lik_list(tree_list, seqs_list)
+# %timeit mk_lik_list(tree_list, seqs_list)
+# %timeit bg_lik_list(tree_list, seqs_list)
+# %timeit bg_lik_list2(tree_list, seqs_list)
 
 

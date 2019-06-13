@@ -42,6 +42,15 @@ bg_llik = loglikelihood_beagle(true_tree, data, id_attr="id", leaf_attr="name", 
 print(f"Beagle log-likelihood of the true tree: {bg_llik}")
 round(bg_llik - true_llik, 6)
 
+bg_instance, tip_name_to_address = loglikelihood_beagle_init(data, scaling=False)
+bg_llik_test = loglikelihood_beagle_evaluate(bg_instance, true_tree, tip_name_to_address, scaling=False)
+print(f"Beagle (test) log-likelihood of the true tree: {bg_llik_test}")
+round(bg_llik_test - true_llik, 6)
+round(bg_llik_test - bg_llik, 6)
+
+# %timeit pinf.Loglikelihood.phyloLoglikelihood(true_tree, true_branch, JC.D, JC.U, JC.U_inv, JC.pi, L)
+# %timeit loglikelihood_beagle_evaluate(bg_instance, true_tree, tip_name_to_address, scaling=False)
+
 # Attempt at Beagle implementation
 
 # Sort-of-Arguments
