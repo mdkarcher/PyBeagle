@@ -418,9 +418,11 @@ def loglikelihood_beagle_init(seqs, model=JC, scaling=False):
     # tree = tree.copy()
     seq_dict = convert_to_dict_lists(seqs)
     val = next(iter(seq_dict.values()))
+
     n_taxa = len(seq_dict)
     n_patterns = len(val)
     n_states = len(model.pi)
+
     n_internals = n_taxa - 2
     n_transition_probs = 2 * n_taxa - 3
 

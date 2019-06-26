@@ -20,6 +20,26 @@ def cheng_lik_list(tree_list, seqs_list, model=JC):
     return result
 
 
+def cheng_lik_list_prep(tree_list, seqs_list, model=JC):
+    result = []
+    for tree, seqs in zip(tree_list, seqs_list):
+        L = pinf.Loglikelihood.initialCLV(seqs)
+        branch = pinf.branch.get(tree)
+        llik = pinf.Loglikelihood.phyloLoglikelihood(tree, branch, model.D, model.U, model.U_inv, model.pi, L)
+        result.append(llik)
+    return result
+
+
+def cheng_lik_list_eval(tree_list, seqs_list, model=JC):
+    result = []
+    for tree, seqs in zip(tree_list, seqs_list):
+        L = pinf.Loglikelihood.initialCLV(seqs)
+        branch = pinf.branch.get(tree)
+        llik = pinf.Loglikelihood.phyloLoglikelihood(tree, branch, model.D, model.U, model.U_inv, model.pi, L)
+        result.append(llik)
+    return result
+
+
 def mk_lik_list(tree_list, seqs_list, model=JC):
     result = []
     for tree, seqs in zip(tree_list, seqs_list):
@@ -42,6 +62,23 @@ def bg_lik_list2(tree_list, seqs_list, model=JC):
         llik = loglikelihood_beagle_rooting_test(tree, seqs, model, scaling=True)
         result.append(llik)
     return result
+
+
+def bg_lik_list_prep(tree_list, seqs_list, model=JC):
+    result = []
+    for tree, seqs in zip(tree_list, seqs_list):
+        llik = loglikelihood_beagle_rooting_test(tree, seqs, model, scaling=True)
+        result.append(llik)
+    return result
+
+
+def bg_lik_list_eval(tree_list, seqs_list, model=JC):
+    result = []
+    for tree, seqs in zip(tree_list, seqs_list):
+        llik = loglikelihood_beagle_rooting_test(tree, seqs, model, scaling=True)
+        result.append(llik)
+    return result
+
 
 n_sims = 10
 n_tips = 100

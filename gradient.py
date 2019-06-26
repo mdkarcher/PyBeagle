@@ -310,3 +310,279 @@ def gradient_loglikelihood_beagle(tree, seqs, model=JC, id_attr=None, leaf_attr=
             result[getattr(node, id_attr)] = dlogL
 
     return result
+
+
+def gradient_loglikelihood_beagle_init(seqs, model=JC, scaling=False):
+    """Calculate branch length gradient of a tree and sequences.
+
+    :param tree: Ete3 Tree object representing the tree topology and branch lengths.
+    :param seqs: Array-like or dictionary of lists of sequence characters or integers.
+    :param model: Substitution model in namedtuple "Model". Default: Jukes-Cantor.
+    :param id_attr: Attribute/feature of each node that uniquely identifies it.
+    :param leaf_attr: Attribute/feature of each leaf that uniquely identifies it,
+    and uniquely identifies the sequence data row/entry in seqs.
+    :return: float representing the derivative of the log-likelihood of the tree,
+    given the sequence data and model.
+    """
+
+    seq_dict = convert_to_dict_lists(seqs)
+    val = next(iter(seq_dict.values()))
+
+    n_taxa = len(seq_dict)
+    n_patterns = len(val)
+    n_states = len(model.pi)
+
+    n_internals = n_taxa - 2
+    n_edges = 2 * n_taxa - 3
+
+    n_partials = n_internals + n_edges
+    n_transition_probs = n_edges
+    n_derivatives = n_edges
+    n_matrices = n_transition_probs + n_derivatives
+
+    if scaling:
+        print("Scaling not currently supported.")
+        scaling = False
+    n_scale_buffers = 0
+    if scaling:
+        n_scale_buffers = n_internals + 1
+
+    # outgroup = tree.children[0]
+    # refresh_ids(tree, attr=id_attr)
+
+    # Sanity check(s)
+
+    # assert set(getattr(node, id_attr) for node in tree.get_leaves()) == set(range(len(tree)))
+    # assert set(getattr(node, id_attr) for node in tree.traverse()) == set(range(2 * len(tree) - 2))
+
+    # Instantiate Beagle
+
+    requirementFlags = 0
+
+    if scaling:
+        requirementFlags |= bg.BEAGLE_FLAG_SCALING_MANUAL
+
+    returnInfo = bg.BeagleInstanceDetails()
+    instance = bg.beagleCreateInstance(
+        n_taxa,  # tips
+        n_partials,  # partials
+        n_taxa,  # sequences
+        n_states,  # states
+        n_patterns,  # patterns
+        1,  # models
+        n_matrices,  # transition matrices
+        1,  # rate categories
+        n_scale_buffers,  # scale buffers
+        None,  # resource restrictions
+        0,  # length of resource list
+        0,  # preferred flags
+        requirementFlags,  # required flags
+        returnInfo  # output details
+    )
+
+    assert instance >= 0
+
+    # Set tip states block
+    # for node in tree.get_leaves():
+    tip_name_to_address = {}
+    for i, key in enumerate(seq_dict):
+        states = bg.make_intarray(seq_dict[key])
+        # states = bg.createStates(seqs[getattr(node, leaf_attr)], dna_ids)
+        bg.beagleSetTipStates(instance, i, states)
+        tip_name_to_address[key] = i
+
+    patternWeights = bg.createPatternWeights([1] * n_patterns)
+    bg.beagleSetPatternWeights(instance, patternWeights)
+
+    # create array of state background frequencies
+    freqs = bg.createPatternWeights(model.pi)
+    # freqs = bg.createPatternWeights([0.25] * 4)
+    bg.beagleSetStateFrequencies(instance, 0, freqs)
+
+    # create an array containing site category weights and rates
+    weights = bg.createPatternWeights([1.0])
+    rates = bg.createPatternWeights([1.0])
+    bg.beagleSetCategoryWeights(instance, 0, weights)
+    bg.beagleSetCategoryRates(instance, rates)
+
+    # set the Eigen decomposition
+    eigvec = bg.createPatternWeights(model.U.ravel())
+    invvec = bg.createPatternWeights(model.U_inv.ravel())
+    eigval = bg.createPatternWeights(model.D)
+    # eigvec = bg.createPatternWeights([1.0, 2.0, 0.0, 0.5,
+    #                                   1.0, -2.0, 0.5, 0.0,
+    #                                   1.0, 2.0, 0.0, -0.5,
+    #                                   1.0, -2.0, -0.5, 0.0])
+    # invvec = bg.createPatternWeights([0.25, 0.25, 0.25, 0.25,
+    #                                   0.125, -0.125, 0.125, -0.125,
+    #                                   0.0, 1.0, 0.0, -1.0,
+    #                                   1.0, 0.0, -1.0, 0.0])
+    # eigval = bg.createPatternWeights([0.0, -1.3333333333333333, -1.3333333333333333, -1.3333333333333333])
+
+    bg.beagleSetEigenDecomposition(instance, 0, eigvec, invvec, eigval)
+    return instance, tip_name_to_address
+
+
+def gradient_loglikelihood_beagle_evaluate(instance, tree, tip_name_to_address, id_attr="id", leaf_attr="name", scaling=False):
+    n_taxa = len(tree)
+    # n_patterns = len(val)
+    # n_states = len(model.pi)
+    n_internals = n_taxa - 2
+    n_edges = 2 * n_taxa - 3
+    # n_transition_probs = n_edges
+
+    n_scale_buffers = 0
+    if scaling:
+        n_scale_buffers = n_internals + 1
+
+    outgroup = tree.children[0]
+    refresh_ids(tree, attr=id_attr)
+
+    # Sanity check(s)
+
+    assert set(getattr(node, id_attr) for node in tree.get_leaves()) == set(range(len(tree)))
+    assert set(getattr(node, id_attr) for node in tree.traverse()) == set(range(2 * len(tree) - 2))
+
+    # a list of indices and edge lengths
+    # create a list of partial likelihood update operations
+    node_list = []
+    derv_list = []
+    edge_list = []
+    operations = bg.new_BeagleOperationArray(n_internals + n_edges)
+
+    op_index = 0
+    for node in tree.traverse("postorder"):
+        if not node.is_root():
+            node_list.append(getattr(node, id_attr))
+            derv_list.append(getattr(node, id_attr) + n_edges)  # derivative indices
+            edge_list.append(node.dist)
+
+        if not node.is_leaf():
+            children = node.get_children()
+            if outgroup in children:
+                children.remove(outgroup)
+            left_child, right_child = children
+
+            scaling_index = bg.BEAGLE_OP_NONE
+            if scaling:
+                scaling_index = op_index + 1
+
+            node_address = getattr(node, id_attr)
+            if left_child.is_leaf():
+                left_child_address = tip_name_to_address[getattr(left_child, leaf_attr)]
+            else:
+                left_child_address = getattr(left_child, id_attr)
+            if right_child.is_leaf():
+                right_child_address = tip_name_to_address[getattr(right_child, leaf_attr)]
+            else:
+                right_child_address = getattr(right_child, id_attr)
+
+            op_list = [node_address, scaling_index, bg.BEAGLE_OP_NONE,
+                       left_child_address, left_child_address,
+                       right_child_address, right_child_address]
+
+            op = bg.make_operation(op_list)
+            bg.BeagleOperationArray_setitem(operations, op_index, op)
+            op_index += 1
+
+    nodeIndices = bg.make_intarray(node_list)
+    dervIndices = bg.make_intarray(derv_list)
+    edgeLengths = bg.make_doublearray(edge_list)
+
+    for node in tree.traverse("preorder"):
+        if not node.is_root():
+            parent = node.up
+            if node.is_leaf():
+                node_address = tip_name_to_address[getattr(node, leaf_attr)]
+            else:
+                node_address = getattr(node, id_attr)
+
+            if not parent.is_root():
+                sibling = node.get_sisters()[0]
+                if sibling.is_leaf():
+                    sibling_address = tip_name_to_address[getattr(sibling, leaf_attr)]
+                else:
+                    sibling_address = getattr(sibling, id_attr)
+
+                op_list = [node_address + n_edges, bg.BEAGLE_OP_NONE, bg.BEAGLE_OP_NONE,
+                           getattr(parent, id_attr) + n_edges, getattr(parent, id_attr),
+                           sibling_address, sibling_address]
+                op = bg.make_operation(op_list)
+                bg.BeagleOperationArray_setitem(operations, op_index, op)
+                op_index += 1
+            else:
+                children = parent.get_children()
+                children.remove(node)
+                left_child, right_child = children
+
+                if left_child.is_leaf():
+                    left_child_address = tip_name_to_address[getattr(left_child, leaf_attr)]
+                else:
+                    left_child_address = getattr(left_child, id_attr)
+                if right_child.is_leaf():
+                    right_child_address = tip_name_to_address[getattr(right_child, leaf_attr)]
+                else:
+                    right_child_address = getattr(right_child, id_attr)
+
+                # TODO: Do I add scaling factors here?
+                op_list = [node_address + n_edges, bg.BEAGLE_OP_NONE, bg.BEAGLE_OP_NONE,
+                           left_child_address, left_child_address,
+                           right_child_address, right_child_address]
+                op = bg.make_operation(op_list)
+                bg.BeagleOperationArray_setitem(operations, op_index, op)
+                op_index += 1
+
+    # tell BEAGLE to populate the transition matrices for the above edge lengths
+    bg.beagleUpdateTransitionMatrices(instance,  # instance
+                                      0,  # eigenIndex
+                                      nodeIndices,  # probabilityIndices
+                                      dervIndices,  # firstDerivativeIndices
+                                      None,  # secondDerivativeIndices
+                                      edgeLengths,  # edgeLengths
+                                      len(node_list))  # count
+
+    # this invokes all the math to carry out the likelihood calculation
+    cumulative_scale_index = bg.BEAGLE_OP_NONE
+    if scaling:
+        cumulative_scale_index = 0
+        bg.beagleResetScaleFactors(instance, cumulative_scale_index)
+    bg.beagleUpdatePartials(instance,  # instance
+                            operations,  # eigenIndex
+                            n_internals + n_edges,  # operationCount
+                            cumulative_scale_index)  # cumulative scale index
+
+    categoryWeightIndex = bg.make_intarray([0])
+    stateFrequencyIndex = bg.make_intarray([0])
+    cumulativeScaleIndex = bg.make_intarray([cumulative_scale_index])
+
+    logLp = bg.new_doublep()
+    dlogLp = bg.new_doublep()
+    result = dict()
+
+    for node in tree.traverse('preorder'):
+        if not node.is_root():
+            upper_partials_index = bg.make_intarray([getattr(node, id_attr) + n_edges])
+            node_index = bg.make_intarray([getattr(node, id_attr)])
+            node_deriv_index = bg.make_intarray([getattr(node, id_attr) + n_edges])
+            bg.beagleCalculateEdgeLogLikelihoods(
+                instance,  # instance number
+                upper_partials_index,  # indices of parent partialsBuffers
+                node_index,  # indices of child partialsBuffers
+                node_index,  # transition probability matrices for this edge
+                node_deriv_index,  # first derivative matrices
+                None,  # second derivative matrices
+                categoryWeightIndex,  # weights to apply to each partialsBuffer
+                stateFrequencyIndex,  # state frequencies for each partialsBuffer
+                cumulativeScaleIndex,  # scaleBuffers containing accumulated factors
+                1,  # Number of partialsBuffer
+                logLp,  # destination for log likelihood
+                dlogLp,  # destination for first derivative  # derivative code
+                None  # destination for second derivative
+            )
+
+            # logL = bg.doublep_value(logLp)
+            dlogL = bg.doublep_value(dlogLp)
+            result[getattr(node, id_attr)] = dlogL
+
+    return result
+

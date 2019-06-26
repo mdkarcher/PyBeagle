@@ -51,6 +51,9 @@ round(bg_llik_test - bg_llik, 6)
 # %timeit pinf.Loglikelihood.phyloLoglikelihood(true_tree, true_branch, JC.D, JC.U, JC.U_inv, JC.pi, L)
 # %timeit loglikelihood_beagle_evaluate(bg_instance, true_tree, tip_name_to_address, scaling=False)
 
+# true_grad = pinf.Loglikelihood.phyloLoglikelihood(true_tree, true_branch, JC.D, JC.U, JC.U_inv, JC.pi, L, grad=True)
+
+
 # Attempt at Beagle implementation
 
 # Sort-of-Arguments
